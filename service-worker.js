@@ -6,14 +6,16 @@
 // here and call self.registration.showNotification(...). That needs a small
 // push server to send the messages — see README.
 
-const CACHE_VERSION = 'pm-v2';
+const CACHE_VERSION = 'pm-v3';
 const APP_SHELL = [
   './',
   './index.html',
   './css/styles.css',
   './js/data.js',
   './js/storage.js',
+  './js/recurrence.js',
   './js/notifications.js',
+  './js/ai.js',
   './js/app.js',
   './manifest.webmanifest',
   './icons/icon.svg',

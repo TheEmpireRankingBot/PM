@@ -40,6 +40,12 @@ and use "Add to Home Screen" to install it as an app.
 - **Rich tasks** — add / edit / complete / delete to-dos, each with an optional due
   date and a **priority** (High / Normal / Low). Overdue and due-soon items are
   colour-coded; high-priority items get a red flag.
+- **Recurring tasks** — set a to-do to repeat **daily, every weekday, weekly, or
+  monthly**. Checking it off rolls it forward to its next due date instead of just
+  completing it.
+- **✨ AI Advisor** — an optional assistant that can see your folders and tasks and
+  help you **plan your day, prioritise, plan your week, or break a project down**.
+  Connect it with your own Anthropic API key (see below).
 - **Search** every task from the top bar.
 - **Light / dark theme** toggle, remembered between visits — along with your last
   open folder and which folders are expanded.
@@ -48,13 +54,28 @@ and use "Add to Home Screen" to install it as an app.
 - **Installable & offline** (PWA: `manifest.webmanifest` + `service-worker.js`).
 - Everything is saved in your browser (localStorage) — no account needed.
 
+## Connecting the AI Advisor
+
+Tap **✨ Advisor** → **⚙️** and paste an Anthropic API key
+(from <https://console.anthropic.com> → API Keys). Pick a model — it defaults to
+**Claude Opus 4.8**, the most capable. The advisor then calls the Claude API
+directly from your browser, sending a summary of your open tasks as context.
+
+- The key is stored **only in this browser, on your device** (localStorage).
+- Calls are billed to your Anthropic account.
+- This direct-from-browser setup is great for a personal app on your own device.
+  For a shared or production app, route the calls through a small backend so the
+  key never reaches the browser (see *Planned next steps*).
+
 ## Planned next steps
 
-1. **Background push** — notify even when the app is fully closed. Needs a small
+1. **AI advisor backend** — a tiny proxy so the API key lives on a server, not in
+   the browser (the secure setup for a multi-user app).
+2. **Background push** — notify even when the app is fully closed. Needs a small
    push server (Web Push + VAPID keys) and a `push` handler in the service worker.
-2. **Drag-and-drop** to reorder tasks and folders.
-3. **Sync across devices** — optional backend so your data follows you.
-4. **Recurring tasks & a calendar view.**
+3. **Drag-and-drop** to reorder tasks and folders.
+4. **Sync across devices** — optional backend so your data follows you.
+5. **Calendar view** of upcoming and recurring tasks.
 
 ## Project layout
 
@@ -63,6 +84,8 @@ index.html              App shell / markup
 css/styles.css          Styling (dark theme, responsive)
 js/data.js              Default folder structure — the "main titles"
 js/storage.js           Saves tree + tasks to localStorage
+js/recurrence.js        Repeating-task options and next-due calculation
+js/ai.js                AI Advisor — Claude API connector + chat UI
 js/notifications.js     Device notifications for due tasks
 js/app.js               Rendering + interaction logic
 manifest.webmanifest    PWA metadata (installable)

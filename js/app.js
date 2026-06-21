@@ -38,6 +38,7 @@ function migrateTasks() {
     for (const t of list) {
       if (t.priority === undefined) t.priority = 'normal';
       if (t.notified === undefined) t.notified = false;
+      if (t.recurrence === undefined) t.recurrence = 'none';
     }
   }
 }
@@ -356,6 +357,9 @@ function renderFolder(node) {
         <option value="low">Low</option>
      </select>` +
     `<input type="datetime-local" class="new-task-due" aria-label="Due date" />` +
+    `<select class="new-task-recur" aria-label="Repeat">` +
+      RECURRENCE_OPTIONS.map((o) => `<option value="${o.value}">${o.value === 'none' ? '↻ ' + o.label : o.label}</option>`).join('') +
+    `</select>` +
     `<button type="submit" class="primary">Add</button>`;
   form.addEventListener('submit', (e) => {
     e.preventDefault();
@@ -369,6 +373,7 @@ function renderFolder(node) {
       done: false,
       notified: false,
       priority: form.querySelector('.new-task-prio').value,
+      recurrence: form.querySelector('.new-task-recur').value,
     });
     saveTasks();
     toast('Task added');
@@ -441,6 +446,16 @@ function renderTask(task, folderId, opts = {}) {
   checkbox.checked = task.done;
   checkbox.setAttribute('aria-label', task.done ? 'Mark not done' : 'Mark done');
   checkbox.addEventListener('change', () => {
+    // Completing a recurring task with a due date rolls it forward instead.
+    if (checkbox.checked && task.recurrence && task.recurrence !== 'none' && task.due) {
+      task.due = Recurrence.next(task.due, task.recurrence);
+      task.done = false;
+      task.notified = false;
+      saveTasks();
+      toast('↻ Next: ' + new Date(task.due).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }));
+      render();
+      return;
+    }
     task.done = checkbox.checked;
     if (!task.done) task.notified = false;
     saveTasks();
@@ -467,6 +482,12 @@ function renderTask(task, folderId, opts = {}) {
     const chip = document.createElement('span');
     chip.className = 'prio-chip ' + task.priority;
     chip.textContent = task.priority === 'high' ? '🔺 High' : 'Low';
+    meta.appendChild(chip);
+  }
+  if (task.recurrence && task.recurrence !== 'none') {
+    const chip = document.createElement('span');
+    chip.className = 'recur-chip';
+    chip.textContent = '↻ ' + Recurrence.label(task.recurrence);
     meta.appendChild(chip);
   }
   if (opts.showFolder) {
@@ -524,6 +545,10 @@ function startEditTask(li, task, folderId, opts) {
   dueInput.type = 'datetime-local';
   if (task.due) dueInput.value = toLocalInput(task.due);
 
+  const recur = document.createElement('select');
+  recur.innerHTML = RECURRENCE_OPTIONS.map((o) => `<option value="${o.value}">${o.value === 'none' ? '↻ ' + o.label : o.label}</option>`).join('');
+  recur.value = task.recurrence || 'none';
+
   const save = document.createElement('button');
   save.className = 'primary';
   save.textContent = 'Save';
@@ -538,6 +563,7 @@ function startEditTask(li, task, folderId, opts) {
     task.text = newText;
     task.priority = prio.value;
     task.due = dueInput.value ? new Date(dueInput.value).toISOString() : null;
+    task.recurrence = recur.value;
     task.notified = false;
     saveTasks();
     render();
@@ -550,7 +576,7 @@ function startEditTask(li, task, folderId, opts) {
     if (e.key === 'Escape') render();
   });
 
-  editor.append(textInput, prio, dueInput, save, cancel);
+  editor.append(textInput, prio, dueInput, recur, save, cancel);
   li.appendChild(editor);
   textInput.focus();
   textInput.select();
@@ -787,6 +813,7 @@ function init() {
   });
 
   $('#add-root-folder').addEventListener('click', () => addFolder(null));
+  $('#advisor-btn').addEventListener('click', openAdvisor);
   $('#theme-toggle').addEventListener('click', toggleTheme);
   $('#enable-notifications').addEventListener('click', enableNotifications);
   $('#menu-toggle').addEventListener('click', () => $('#sidebar').classList.toggle('open'));
