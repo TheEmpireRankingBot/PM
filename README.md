@@ -59,8 +59,12 @@ and use "Add to Home Screen" to install it as an app.
   open folder and which folders are expanded.
 - **Device reminders** — tap **🔔 Reminders** to be notified when a to-do is due
   (works while the app is open or backgrounded).
+- **☁️ Sync across devices** — connect a free Supabase project once and your
+  folders and tasks stay the **same on phone and PC**. Data is **end-to-end
+  encrypted** with a passphrase before it leaves the device (see below). Also
+  includes account-free **export / import backup**.
 - **Installable & offline** (PWA: `manifest.webmanifest` + `service-worker.js`).
-- Everything is saved in your browser (localStorage) — no account needed.
+- Everything is saved in your browser (localStorage); cloud sync is optional.
 
 ## Connecting the AI Advisor
 
@@ -80,6 +84,49 @@ due dates** in the advisor, or tick *"Let the AI estimate due dates"* in Bulk ad
 It only fills tasks that don't already have a date — anything you set by hand is
 left untouched.
 
+## Syncing across devices
+
+Your tasks and folders can follow you between phone and PC, backed by a **free
+Supabase project you own**. It's optional — without it, data just stays on each
+device.
+
+**One-time setup**
+
+1. Create a free project at <https://supabase.com>.
+2. In the project, open **SQL Editor** and run:
+
+   ```sql
+   create table if not exists pm_state (
+     id text primary key,
+     data text not null,
+     updated_at timestamptz not null default now()
+   );
+   alter table pm_state enable row level security;
+   create policy "pm anon read"   on pm_state for select using (true);
+   create policy "pm anon insert" on pm_state for insert with check (true);
+   create policy "pm anon update" on pm_state for update using (true) with check (true);
+   ```
+
+3. Open **Project Settings → API** and copy the **Project URL** and the
+   **anon public** key.
+4. In the app, tap **☁️** → paste the URL, the anon key, and a **passphrase**,
+   then **Connect**. Do the exact same on your other device, using the **same
+   passphrase**.
+
+**Privacy.** Your tasks are **end-to-end encrypted** (AES-GCM, key derived from
+your passphrase) *before* upload, and the row is keyed by a hash of the
+passphrase. The app ships Supabase's public *anon* key, but the stored data is
+ciphertext — nobody can read your tasks without the passphrase. The passphrase
+is stored only on each device so it can decrypt.
+
+**How it syncs.** Whole-document, last-write-wins: the most recent save wins, and
+other devices pick it up on load, on focus, and about every 45 seconds. Per-device
+preferences (theme, which folders are expanded) are intentionally *not* synced.
+
+> This direct-from-browser model needs the app served over **https** (or
+> `localhost`) so the browser's crypto is available. Open it over `file://` and
+> sync stays disabled.
+
 ## Planned next steps
 
 1. **AI advisor backend** — a tiny proxy so the API key lives on a server, not in
@@ -87,7 +134,7 @@ left untouched.
 2. **Background push** — notify even when the app is fully closed. Needs a small
    push server (Web Push + VAPID keys) and a `push` handler in the service worker.
 3. **Drag-and-drop** to reorder tasks and folders.
-4. **Sync across devices** — optional backend so your data follows you.
+4. **Real-time sync & field-level merge** — beyond whole-document last-write-wins.
 5. **Calendar view** of upcoming and recurring tasks.
 
 ## Project layout
@@ -99,6 +146,7 @@ js/data.js              Default folder structure — the "main titles"
 js/storage.js           Saves tree + tasks to localStorage
 js/recurrence.js        Repeating-task options and next-due calculation
 js/ai.js                AI Advisor — Claude API connector + chat UI
+js/sync.js              Cross-device sync (encrypted, Supabase) + backup
 js/notifications.js     Device notifications for due tasks
 js/app.js               Rendering + interaction logic
 manifest.webmanifest    PWA metadata (installable)

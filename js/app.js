@@ -28,9 +28,12 @@ const escapeHTML = (s) =>
 
 // ---- Persistence ------------------------------------------------------------
 
-function saveTree()  { Storage.saveTree(state.tree); }
-function saveTasks() { Storage.saveTasks(state.tasks); }
-function saveUI()    { Storage.saveUI(state.ui); }
+function saveTree()  { Storage.saveTree(state.tree); syncDirty(); }
+function saveTasks() { Storage.saveTasks(state.tasks); syncDirty(); }
+function saveUI()    { Storage.saveUI(state.ui); } // UI (theme, expanded) stays per-device
+
+// Tell the sync layer the shared "memory" changed (no-op if sync isn't set up).
+function syncDirty() { if (typeof Sync !== 'undefined') Sync.markDirty(); }
 
 // Ensure every task has the fields newer code expects (migrates old data).
 function migrateTasks() {
@@ -1001,6 +1004,7 @@ function init() {
 
   $('#add-root-folder').addEventListener('click', () => addFolder(null));
   $('#advisor-btn').addEventListener('click', openAdvisor);
+  $('#sync-btn').addEventListener('click', openSync);
   $('#theme-toggle').addEventListener('click', toggleTheme);
   $('#enable-notifications').addEventListener('click', enableNotifications);
   $('#menu-toggle').addEventListener('click', () => $('#sidebar').classList.toggle('open'));
@@ -1013,6 +1017,9 @@ function init() {
 
   runDueCheck();
   setInterval(runDueCheck, 60 * 1000);
+
+  // Start cross-device sync if it's been set up (pulls remote, then keeps in sync).
+  if (typeof Sync !== 'undefined') Sync.start();
 
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('service-worker.js').catch(() => {});
