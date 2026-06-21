@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -13,32 +13,44 @@
   <header class="topbar">
     <button id="menu-toggle" class="icon-btn" aria-label="Toggle folders">☰</button>
     <h1 class="app-title">📂 PM</h1>
+
+    <div class="search-wrap">
+      <span class="search-icon" aria-hidden="true">🔍</span>
+      <input id="search" type="search" placeholder="Search all tasks…" autocomplete="off" aria-label="Search tasks" />
+    </div>
+
     <div class="topbar-actions">
-      <button id="enable-notifications" class="pill">🔔 Enable notifications</button>
+      <button id="theme-toggle" class="icon-btn" aria-label="Toggle light or dark theme" title="Toggle theme">🌙</button>
+      <button id="enable-notifications" class="pill" title="Get reminders when tasks are due">🔔 Reminders</button>
     </div>
   </header>
 
   <div class="layout">
     <!-- File-explorer sidebar -->
     <aside id="sidebar" class="sidebar">
+      <button id="dashboard-pin" class="nav-pin">
+        <span class="nav-pin-icon">🏠</span>
+        <span class="nav-pin-label">Today</span>
+        <span id="dash-badge" class="pin-badge"></span>
+      </button>
+
+      <div class="sidebar-section">
+        <span class="sidebar-section-label">Folders</span>
+        <button id="add-root-folder" class="mini-btn" title="New folder" aria-label="New folder">＋</button>
+      </div>
+
       <nav id="tree" class="tree" aria-label="Folders"></nav>
     </aside>
 
-    <!-- Main panel: the selected folder's to-do items -->
+    <!-- Main panel: rendered by app.js (dashboard, a folder, or search results) -->
     <main class="content">
-      <div id="breadcrumb" class="breadcrumb"></div>
-      <h2 id="folder-title" class="folder-title">Select a folder</h2>
-
-      <form id="add-task-form" class="add-task" hidden>
-        <input id="task-input" type="text" placeholder="Add something to do…" autocomplete="off" />
-        <input id="task-due" type="datetime-local" aria-label="Due date" />
-        <button type="submit" class="primary">Add</button>
-      </form>
-
-      <ul id="task-list" class="task-list"></ul>
-      <p id="empty-hint" class="empty-hint"></p>
+      <div id="main-view"></div>
     </main>
   </div>
+
+  <!-- UI feedback layers -->
+  <div id="toast-root" class="toast-root" aria-live="polite"></div>
+  <div id="modal-root"></div>
 
   <script src="js/data.js"></script>
   <script src="js/storage.js"></script>

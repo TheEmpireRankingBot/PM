@@ -31,21 +31,30 @@ and use "Add to Home Screen" to install it as an app.
 
 ## What works now
 
-- File-explorer sidebar with expandable folders and open-task counts.
-- Add / complete / delete to-do items per folder, each with an optional due date.
-- Overdue and due-soon items are colour-coded.
-- Everything is saved in your browser (localStorage) — no account needed.
-- Click **🔔 Enable notifications** to get a device notification when a task is due
+- **🏠 Today dashboard** — one home screen showing everything **Overdue**,
+  **Due today**, and in the **Next 7 days** across all folders, plus a progress bar.
+  The "Today" badge in the sidebar shows how many items need attention.
+- **File-explorer sidebar** with expandable folders and open-task counts.
+- **Manage folders in the app** — hover a folder to **add a sub-folder, rename, or
+  delete** it (with an emoji picker). No code editing needed.
+- **Rich tasks** — add / edit / complete / delete to-dos, each with an optional due
+  date and a **priority** (High / Normal / Low). Overdue and due-soon items are
+  colour-coded; high-priority items get a red flag.
+- **Search** every task from the top bar.
+- **Light / dark theme** toggle, remembered between visits — along with your last
+  open folder and which folders are expanded.
+- **Device reminders** — tap **🔔 Reminders** to be notified when a task is due
   (works while the app is open or backgrounded).
-- Installable & works offline (PWA: `manifest.webmanifest` + `service-worker.js`).
+- **Installable & offline** (PWA: `manifest.webmanifest` + `service-worker.js`).
+- Everything is saved in your browser (localStorage) — no account needed.
 
 ## Planned next steps
 
 1. **Background push** — notify even when the app is fully closed. Needs a small
    push server (Web Push + VAPID keys) and a `push` handler in the service worker.
-2. **Edit folders from the UI** — add/rename/reorder folders without touching code.
+2. **Drag-and-drop** to reorder tasks and folders.
 3. **Sync across devices** — optional backend so your data follows you.
-4. **Recurring tasks & calendar view.**
+4. **Recurring tasks & a calendar view.**
 
 ## Project layout
 

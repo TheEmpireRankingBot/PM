@@ -1,66 +1,174 @@
 // app.js
-// Ties everything together: renders the file-explorer tree, shows a folder's
-// to-do items, handles adding/completing/deleting, and runs the notification check.
+// Ties everything together: the file-explorer sidebar, the "Today" dashboard,
+// per-folder task lists, search, folder management, theme, and reminders.
 
-let tree = Storage.loadTree();
-let tasks = Storage.loadTasks();         // { [folderId]: Task[] }
-let selectedFolderId = null;
+// ---- State ------------------------------------------------------------------
 
-// --- helpers -----------------------------------------------------------------
+const state = {
+  tree: Storage.loadTree(),
+  tasks: Storage.loadTasks(),     // { [folderId]: Task[] }
+  ui: Storage.loadUI(),           // { theme, selectedFolderId, view, expanded }
+};
 
-// Build a flat lookup of folderId -> title so notifications can name the folder.
-function buildFolderTitleMap(nodes, map = {}) {
-  for (const node of nodes) {
-    map[node.id] = node.title;
-    if (node.children) buildFolderTitleMap(node.children, map);
+let searchQuery = '';
+
+const PRIORITIES = { high: 0, normal: 1, low: 2 };
+const EMOJI_CHOICES = [
+  '📁','🌱','💼','🚀','🎯','💕','📚','🏃',
+  '💰','👨‍👩‍👧','✅','💡','🗓️','⏰','🧠','📱',
+  '📆','🌟','🛒','🎨','🏠','✈️','🍽️','🎵',
+  '📝','💪','🐶','☕','❤️','🔧','📈','🎓',
+];
+
+const uid = () => Math.random().toString(36).slice(2, 10);
+const $ = (sel) => document.querySelector(sel);
+const escapeHTML = (s) =>
+  String(s).replace(/[&<>"']/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+// ---- Persistence ------------------------------------------------------------
+
+function saveTree()  { Storage.saveTree(state.tree); }
+function saveTasks() { Storage.saveTasks(state.tasks); }
+function saveUI()    { Storage.saveUI(state.ui); }
+
+// Ensure every task has the fields newer code expects (migrates old data).
+function migrateTasks() {
+  for (const list of Object.values(state.tasks)) {
+    for (const t of list) {
+      if (t.priority === undefined) t.priority = 'normal';
+      if (t.notified === undefined) t.notified = false;
+    }
   }
-  return map;
 }
+
+// ---- Tree helpers -----------------------------------------------------------
 
 function tasksFor(folderId) {
-  if (!tasks[folderId]) tasks[folderId] = [];
-  return tasks[folderId];
+  if (!state.tasks[folderId]) state.tasks[folderId] = [];
+  return state.tasks[folderId];
 }
 
-// Count open (not done) tasks within a folder and all its descendants.
-function openCount(node) {
-  let count = tasksFor(node.id).filter(t => !t.done).length;
-  if (node.children) for (const child of node.children) count += openCount(child);
-  return count;
-}
-
-function findNode(nodes, id) {
+function findNode(id, nodes = state.tree) {
   for (const node of nodes) {
     if (node.id === id) return node;
     if (node.children) {
-      const found = findNode(node.children, id);
+      const found = findNode(id, node.children);
       if (found) return found;
     }
   }
   return null;
 }
 
-// Path of titles from root to the given folder, for the breadcrumb.
-function pathTo(nodes, id, trail = []) {
+function pathTo(id, nodes = state.tree, trail = []) {
   for (const node of nodes) {
     const next = [...trail, node];
     if (node.id === id) return next;
     if (node.children) {
-      const found = pathTo(node.children, id, next);
+      const found = pathTo(id, node.children, next);
       if (found) return found;
     }
   }
   return null;
 }
 
-const uid = () => Math.random().toString(36).slice(2, 10);
+// Find a node's parent array (for delete). Returns the array containing it.
+function parentArrayOf(id, nodes = state.tree) {
+  for (const node of nodes) {
+    if (node.id === id) return nodes;
+    if (node.children) {
+      const found = parentArrayOf(id, node.children);
+      if (found) return found;
+    }
+  }
+  return null;
+}
 
-// --- tree (file explorer) ----------------------------------------------------
+// Open (not done) task count for a folder including its descendants.
+function openCount(node) {
+  let count = tasksFor(node.id).filter((t) => !t.done).length;
+  if (node.children) for (const child of node.children) count += openCount(child);
+  return count;
+}
 
-function renderTree() {
-  const container = document.getElementById('tree');
+// Walk every folder and yield { node, path, tasks } — used by dashboard & search.
+function eachFolder(callback, nodes = state.tree, trail = []) {
+  for (const node of nodes) {
+    const path = [...trail, node];
+    callback(node, path, tasksFor(node.id));
+    if (node.children) eachFolder(callback, node.children, path);
+  }
+}
+
+function collectIds(node, acc = []) {
+  acc.push(node.id);
+  if (node.children) for (const c of node.children) collectIds(c, acc);
+  return acc;
+}
+
+// ---- Date helpers -----------------------------------------------------------
+
+function startOfToday() { const d = new Date(); d.setHours(0, 0, 0, 0); return d; }
+function endOfToday()   { const d = new Date(); d.setHours(23, 59, 59, 999); return d; }
+
+function dueClass(task) {
+  if (task.done || !task.due) return '';
+  const due = new Date(task.due);
+  const now = new Date();
+  if (due < now) return 'overdue';
+  if ((due - now) / 36e5 <= 24) return 'soon';
+  return '';
+}
+
+function formatDue(iso) {
+  const d = new Date(iso);
+  return 'Due ' + d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+function sortTasks(a, b) {
+  if (a.done !== b.done) return a.done ? 1 : -1;
+  if (a.due && b.due && a.due !== b.due) return new Date(a.due) - new Date(b.due);
+  if (a.due && !b.due) return -1;
+  if (!a.due && b.due) return 1;
+  return PRIORITIES[a.priority] - PRIORITIES[b.priority];
+}
+
+// ---- Rendering: top-level ---------------------------------------------------
+
+function render() {
+  renderSidebar();
+  renderMain();
+}
+
+function renderMain() {
+  const root = $('#main-view');
+  root.innerHTML = '';
+  if (searchQuery) {
+    root.appendChild(renderSearch());
+  } else if (state.ui.view === 'folder' && findNode(state.ui.selectedFolderId)) {
+    root.appendChild(renderFolder(findNode(state.ui.selectedFolderId)));
+  } else {
+    root.appendChild(renderDashboard());
+  }
+}
+
+// ---- Rendering: sidebar -----------------------------------------------------
+
+function renderSidebar() {
+  // "Today" pin + its overdue/today badge
+  const pin = $('#dashboard-pin');
+  pin.classList.toggle('active', !searchQuery && state.ui.view === 'dashboard');
+  let dueSoonCount = 0;
+  eachFolder((node, path, tasks) => {
+    for (const t of tasks) {
+      if (!t.done && t.due && new Date(t.due) <= endOfToday()) dueSoonCount++;
+    }
+  });
+  $('#dash-badge').textContent = dueSoonCount || '';
+
+  const container = $('#tree');
   container.innerHTML = '';
-  for (const node of tree) container.appendChild(renderNode(node));
+  for (const node of state.tree) container.appendChild(renderNode(node));
 }
 
 function renderNode(node) {
@@ -69,18 +177,23 @@ function renderNode(node) {
 
   const row = document.createElement('div');
   row.className = 'row';
-  if (node.id === selectedFolderId) row.classList.add('selected');
+  if (!searchQuery && state.ui.view === 'folder' && node.id === state.ui.selectedFolderId) {
+    row.classList.add('selected');
+  }
 
   const hasChildren = node.children && node.children.length > 0;
+  const isOpen = !!state.ui.expanded[node.id];
 
   const twisty = document.createElement('span');
-  twisty.className = 'twisty';
+  twisty.className = 'twisty' + (isOpen ? ' open' : '');
   twisty.textContent = hasChildren ? '▶' : '';
 
   const icon = document.createElement('span');
+  icon.className = 'row-icon';
   icon.textContent = node.icon || '📁';
 
   const label = document.createElement('span');
+  label.className = 'row-label';
   label.textContent = node.title;
 
   row.append(twisty, icon, label);
@@ -93,94 +206,245 @@ function renderNode(node) {
     row.appendChild(badge);
   }
 
+  // Hover actions: add subfolder, rename, delete
+  const actions = document.createElement('span');
+  actions.className = 'row-actions';
+  actions.append(
+    actionBtn('➕', 'Add subfolder', (e) => { e.stopPropagation(); addFolder(node); }),
+    actionBtn('✏️', 'Rename', (e) => { e.stopPropagation(); renameFolder(node); }),
+    actionBtn('🗑', 'Delete', (e) => { e.stopPropagation(); deleteFolder(node); }),
+  );
+  row.appendChild(actions);
+
   wrapper.appendChild(row);
 
   let childrenEl = null;
   if (hasChildren) {
     childrenEl = document.createElement('div');
-    childrenEl.className = 'tree-children';
+    childrenEl.className = 'tree-children' + (isOpen ? ' open' : '');
     for (const child of node.children) childrenEl.appendChild(renderNode(child));
     wrapper.appendChild(childrenEl);
   }
 
   row.addEventListener('click', () => {
-    // Toggle expand/collapse for folders that have children…
-    if (hasChildren && childrenEl) {
-      const open = childrenEl.classList.toggle('open');
-      twisty.classList.toggle('open', open);
+    if (hasChildren) {
+      state.ui.expanded[node.id] = !state.ui.expanded[node.id];
+      saveUI();
     }
-    // …and always select the folder to show its tasks.
     selectFolder(node.id);
   });
 
   return wrapper;
 }
 
-// --- folder content (tasks) --------------------------------------------------
+function actionBtn(text, title, onClick) {
+  const b = document.createElement('button');
+  b.className = 'row-action';
+  b.textContent = text;
+  b.title = title;
+  b.setAttribute('aria-label', title);
+  b.addEventListener('click', onClick);
+  return b;
+}
 
 function selectFolder(folderId) {
-  selectedFolderId = folderId;
+  state.ui.selectedFolderId = folderId;
+  state.ui.view = 'folder';
+  searchQuery = '';
+  $('#search').value = '';
+  saveUI();
   closeSidebarOnMobile();
-  renderTree();   // refresh selection highlight + counts
-  renderContent();
+  render();
 }
 
-function renderContent() {
-  const titleEl = document.getElementById('folder-title');
-  const breadcrumbEl = document.getElementById('breadcrumb');
-  const form = document.getElementById('add-task-form');
-  const list = document.getElementById('task-list');
-  const hint = document.getElementById('empty-hint');
+// ---- Rendering: dashboard ("Today") ----------------------------------------
 
-  list.innerHTML = '';
+function renderDashboard() {
+  const frag = document.createElement('div');
 
-  if (!selectedFolderId) {
-    titleEl.textContent = 'Select a folder';
-    breadcrumbEl.textContent = '';
-    form.hidden = true;
-    hint.textContent = 'Pick a folder on the left to see and add things to do.';
-    return;
+  const title = document.createElement('h2');
+  title.className = 'view-title';
+  title.textContent = '🏠 Today';
+  const sub = document.createElement('p');
+  sub.className = 'view-sub';
+  sub.textContent = new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
+  frag.append(title, sub);
+
+  // Gather tasks into buckets
+  const overdue = [], today = [], upcoming = [];
+  let total = 0, done = 0;
+  const weekEnd = new Date(endOfToday().getTime() + 6 * 864e5);
+
+  eachFolder((node, path, tasks) => {
+    for (const t of tasks) {
+      total++;
+      if (t.done) { done++; continue; }
+      if (!t.due) continue;
+      const due = new Date(t.due);
+      const entry = { task: t, node, path };
+      if (due < startOfToday()) overdue.push(entry);
+      else if (due <= endOfToday()) today.push(entry);
+      else if (due <= weekEnd) upcoming.push(entry);
+    }
+  });
+  const byDue = (a, b) => new Date(a.task.due) - new Date(b.task.due);
+  overdue.sort(byDue); today.sort(byDue); upcoming.sort(byDue);
+
+  // Progress bar
+  const pct = total ? Math.round((done / total) * 100) : 0;
+  const prog = document.createElement('div');
+  prog.className = 'progress-wrap';
+  prog.innerHTML =
+    `<div class="progress-head"><span>${done} of ${total} tasks done</span><span>${pct}%</span></div>` +
+    `<div class="progress-track"><div class="progress-fill" style="width:${pct}%"></div></div>`;
+  frag.appendChild(prog);
+
+  // Nothing scheduled at all?
+  if (!overdue.length && !today.length && !upcoming.length) {
+    frag.appendChild(emptyState('🎉', total ? "You're all caught up!" : 'No tasks yet',
+      total ? 'Nothing due in the next 7 days. Nice work.' : 'Open a folder on the left and add your first to-do.'));
+    return frag;
   }
 
-  const node = findNode(tree, selectedFolderId);
-  const trail = pathTo(tree, selectedFolderId) || [];
-  breadcrumbEl.textContent = trail.map(n => n.title).join('  ›  ');
-  titleEl.textContent = `${node.icon || '📁'}  ${node.title}`;
-  form.hidden = false;
+  if (overdue.length)  frag.appendChild(dashboardGroup('Overdue', 'red', overdue));
+  if (today.length)    frag.appendChild(dashboardGroup('Due today', 'amber', today));
+  if (upcoming.length) frag.appendChild(dashboardGroup('Next 7 days', 'blue', upcoming));
 
-  const items = tasksFor(selectedFolderId)
-    .slice()
-    .sort(sortTasks);
+  return frag;
+}
 
-  if (items.length === 0) {
-    hint.textContent = 'Nothing here yet. Add your first to-do above.';
+function dashboardGroup(label, color, entries) {
+  const wrap = document.createElement('div');
+  const head = document.createElement('div');
+  head.className = 'group-title';
+  head.innerHTML = `<span class="dot ${color}"></span>${label} <span style="color:var(--muted);font-weight:600">${entries.length}</span>`;
+  wrap.appendChild(head);
+
+  const ul = document.createElement('ul');
+  ul.className = 'task-list';
+  for (const { task, node } of entries) {
+    ul.appendChild(renderTask(task, node.id, { showFolder: true, folderName: `${node.icon || '📁'} ${node.title}` }));
+  }
+  wrap.appendChild(ul);
+  return wrap;
+}
+
+// ---- Rendering: a folder ----------------------------------------------------
+
+function renderFolder(node) {
+  const frag = document.createElement('div');
+
+  const trail = pathTo(node.id) || [];
+  const crumb = document.createElement('div');
+  crumb.className = 'breadcrumb';
+  crumb.textContent = trail.map((n) => n.title).join('  ›  ');
+  frag.appendChild(crumb);
+
+  const title = document.createElement('h2');
+  title.className = 'view-title';
+  title.textContent = `${node.icon || '📁'}  ${node.title}`;
+  frag.appendChild(title);
+
+  // Add-task form
+  const form = document.createElement('form');
+  form.className = 'add-task';
+  form.innerHTML =
+    `<input type="text" class="new-task-text" placeholder="Add something to do…" autocomplete="off" />` +
+    `<select class="new-task-prio" aria-label="Priority">
+        <option value="normal">Normal</option>
+        <option value="high">High</option>
+        <option value="low">Low</option>
+     </select>` +
+    `<input type="datetime-local" class="new-task-due" aria-label="Due date" />` +
+    `<button type="submit" class="primary">Add</button>`;
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const text = form.querySelector('.new-task-text').value.trim();
+    if (!text) return;
+    const dueVal = form.querySelector('.new-task-due').value;
+    tasksFor(node.id).push({
+      id: uid(),
+      text,
+      due: dueVal ? new Date(dueVal).toISOString() : null,
+      done: false,
+      notified: false,
+      priority: form.querySelector('.new-task-prio').value,
+    });
+    saveTasks();
+    toast('Task added');
+    render();
+    // keep focus for fast entry
+    requestAnimationFrame(() => $('#main-view .new-task-text')?.focus());
+  });
+  frag.appendChild(form);
+
+  // Task list
+  const items = tasksFor(node.id).slice().sort(sortTasks);
+  if (!items.length) {
+    frag.appendChild(emptyState('📝', 'Nothing here yet', 'Add your first to-do above.'));
   } else {
-    hint.textContent = '';
-    for (const task of items) list.appendChild(renderTask(task));
+    const ul = document.createElement('ul');
+    ul.className = 'task-list';
+    for (const task of items) ul.appendChild(renderTask(task, node.id));
+    frag.appendChild(ul);
   }
+
+  return frag;
 }
 
-// Open tasks first (soonest due first), done tasks last.
-function sortTasks(a, b) {
-  if (a.done !== b.done) return a.done ? 1 : -1;
-  if (a.due && b.due) return new Date(a.due) - new Date(b.due);
-  if (a.due) return -1;
-  if (b.due) return 1;
-  return 0;
+// ---- Rendering: search ------------------------------------------------------
+
+function renderSearch() {
+  const frag = document.createElement('div');
+  const title = document.createElement('h2');
+  title.className = 'view-title';
+  title.textContent = '🔍 Results';
+  frag.appendChild(title);
+
+  const q = searchQuery.toLowerCase();
+  const matches = [];
+  eachFolder((node, path, tasks) => {
+    for (const t of tasks) {
+      if (t.text.toLowerCase().includes(q)) matches.push({ task: t, node });
+    }
+  });
+
+  const sub = document.createElement('p');
+  sub.className = 'view-sub';
+  sub.textContent = `${matches.length} task${matches.length === 1 ? '' : 's'} matching "${searchQuery}"`;
+  frag.appendChild(sub);
+
+  if (!matches.length) {
+    frag.appendChild(emptyState('🔍', 'No matches', 'Try a different word.'));
+    return frag;
+  }
+
+  matches.sort((a, b) => sortTasks(a.task, b.task));
+  const ul = document.createElement('ul');
+  ul.className = 'task-list';
+  for (const { task, node } of matches) {
+    ul.appendChild(renderTask(task, node.id, { showFolder: true, folderName: `${node.icon || '📁'} ${node.title}` }));
+  }
+  frag.appendChild(ul);
+  return frag;
 }
 
-function renderTask(task) {
+// ---- Rendering: a single task ----------------------------------------------
+
+function renderTask(task, folderId, opts = {}) {
   const li = document.createElement('li');
-  li.className = 'task-item' + (task.done ? ' done' : '');
+  li.className = 'task-item' + (task.done ? ' done' : '') +
+    (task.priority === 'high' ? ' prio-high' : task.priority === 'low' ? ' prio-low' : '');
 
   const checkbox = document.createElement('input');
   checkbox.type = 'checkbox';
   checkbox.checked = task.done;
+  checkbox.setAttribute('aria-label', task.done ? 'Mark not done' : 'Mark done');
   checkbox.addEventListener('change', () => {
     task.done = checkbox.checked;
-    persist();
-    renderTree();
-    renderContent();
+    if (!task.done) task.notified = false;
+    saveTasks();
+    render();
   });
 
   const main = document.createElement('div');
@@ -191,125 +455,351 @@ function renderTask(task) {
   text.textContent = task.text;
   main.appendChild(text);
 
+  const meta = document.createElement('div');
+  meta.className = 'task-meta';
   if (task.due) {
-    const due = document.createElement('div');
+    const due = document.createElement('span');
     due.className = 'task-due ' + dueClass(task);
     due.textContent = formatDue(task.due);
-    main.appendChild(due);
+    meta.appendChild(due);
   }
+  if (task.priority === 'high' || task.priority === 'low') {
+    const chip = document.createElement('span');
+    chip.className = 'prio-chip ' + task.priority;
+    chip.textContent = task.priority === 'high' ? '🔺 High' : 'Low';
+    meta.appendChild(chip);
+  }
+  if (opts.showFolder) {
+    const folder = document.createElement('span');
+    folder.className = 'task-folder';
+    folder.textContent = opts.folderName;
+    folder.style.cursor = 'pointer';
+    folder.title = 'Open folder';
+    folder.addEventListener('click', () => selectFolder(folderId));
+    meta.appendChild(folder);
+  }
+  if (meta.childNodes.length) main.appendChild(meta);
 
-  const del = document.createElement('button');
-  del.className = 'delete-btn';
-  del.textContent = '🗑';
-  del.title = 'Delete';
-  del.addEventListener('click', () => {
-    tasks[selectedFolderId] = tasksFor(selectedFolderId).filter(t => t.id !== task.id);
-    persist();
-    renderTree();
-    renderContent();
-  });
+  const actions = document.createElement('div');
+  actions.className = 'task-actions';
+  actions.append(
+    taskBtn('✏️', 'Edit', () => startEditTask(li, task, folderId, opts)),
+    taskBtn('🗑', 'Delete', () => {
+      state.tasks[folderId] = tasksFor(folderId).filter((t) => t.id !== task.id);
+      saveTasks();
+      toast('Task deleted');
+      render();
+    }, true),
+  );
 
-  li.append(checkbox, main, del);
+  li.append(checkbox, main, actions);
   return li;
 }
 
-function dueClass(task) {
-  if (task.done) return '';
-  const due = new Date(task.due);
-  const now = new Date();
-  if (due < now) return 'overdue';
-  const hoursLeft = (due - now) / 36e5;
-  if (hoursLeft <= 24) return 'soon';
-  return '';
+function taskBtn(text, title, onClick, danger) {
+  const b = document.createElement('button');
+  b.className = 'task-btn' + (danger ? ' danger' : '');
+  b.textContent = text;
+  b.title = title;
+  b.setAttribute('aria-label', title);
+  b.addEventListener('click', onClick);
+  return b;
 }
 
-function formatDue(iso) {
-  const d = new Date(iso);
-  const opts = { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' };
-  return 'Due ' + d.toLocaleString(undefined, opts);
-}
+// Swap a task row into an inline editor.
+function startEditTask(li, task, folderId, opts) {
+  li.innerHTML = '';
+  const editor = document.createElement('div');
+  editor.className = 'task-edit';
 
-// --- actions -----------------------------------------------------------------
+  const textInput = document.createElement('input');
+  textInput.type = 'text';
+  textInput.value = task.text;
 
-function handleAddTask(event) {
-  event.preventDefault();
-  const input = document.getElementById('task-input');
-  const dueInput = document.getElementById('task-due');
-  const textValue = input.value.trim();
-  if (!textValue || !selectedFolderId) return;
+  const prio = document.createElement('select');
+  prio.innerHTML = `<option value="normal">Normal</option><option value="high">High</option><option value="low">Low</option>`;
+  prio.value = task.priority || 'normal';
 
-  tasksFor(selectedFolderId).push({
-    id: uid(),
-    text: textValue,
-    due: dueInput.value ? new Date(dueInput.value).toISOString() : null,
-    done: false,
-    notified: false,
+  const dueInput = document.createElement('input');
+  dueInput.type = 'datetime-local';
+  if (task.due) dueInput.value = toLocalInput(task.due);
+
+  const save = document.createElement('button');
+  save.className = 'primary';
+  save.textContent = 'Save';
+
+  const cancel = document.createElement('button');
+  cancel.className = 'btn-ghost';
+  cancel.textContent = 'Cancel';
+
+  const commit = () => {
+    const newText = textInput.value.trim();
+    if (!newText) { toast('Task needs a name'); return; }
+    task.text = newText;
+    task.priority = prio.value;
+    task.due = dueInput.value ? new Date(dueInput.value).toISOString() : null;
+    task.notified = false;
+    saveTasks();
+    render();
+  };
+
+  save.addEventListener('click', commit);
+  cancel.addEventListener('click', () => render());
+  textInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') commit();
+    if (e.key === 'Escape') render();
   });
 
-  input.value = '';
-  dueInput.value = '';
-  persist();
-  renderTree();
-  renderContent();
+  editor.append(textInput, prio, dueInput, save, cancel);
+  li.appendChild(editor);
+  textInput.focus();
+  textInput.select();
 }
 
-function persist() {
-  Storage.saveTasks(tasks);
+// Convert an ISO string to the value a <input type=datetime-local> expects.
+function toLocalInput(iso) {
+  const d = new Date(iso);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-// --- notifications -----------------------------------------------------------
+// ---- Folder management ------------------------------------------------------
+
+async function addFolder(parent) {
+  const result = await nameModal({ title: parent ? `New folder in “${parent.title}”` : 'New folder' });
+  if (!result) return;
+  const node = { id: uid(), title: result.name, icon: result.icon, children: [] };
+  if (parent) {
+    parent.children = parent.children || [];
+    parent.children.push(node);
+    state.ui.expanded[parent.id] = true;
+  } else {
+    state.tree.push(node);
+  }
+  saveTree();
+  saveUI();
+  toast('Folder added');
+  render();
+}
+
+async function renameFolder(node) {
+  const result = await nameModal({ title: 'Rename folder', name: node.title, icon: node.icon });
+  if (!result) return;
+  node.title = result.name;
+  node.icon = result.icon;
+  saveTree();
+  toast('Folder renamed');
+  render();
+}
+
+async function deleteFolder(node) {
+  const ids = collectIds(node);
+  const taskTotal = ids.reduce((sum, id) => sum + tasksFor(id).length, 0);
+  const ok = await confirmModal({
+    title: `Delete “${node.title}”?`,
+    message: taskTotal
+      ? `This also deletes ${taskTotal} task${taskTotal === 1 ? '' : 's'} and any sub-folders. This can't be undone.`
+      : `Any sub-folders will be removed too. This can't be undone.`,
+    confirmLabel: 'Delete',
+  });
+  if (!ok) return;
+
+  const arr = parentArrayOf(node.id);
+  if (arr) arr.splice(arr.findIndex((n) => n.id === node.id), 1);
+  for (const id of ids) {
+    delete state.tasks[id];
+    delete state.ui.expanded[id];
+  }
+  if (ids.includes(state.ui.selectedFolderId)) {
+    state.ui.selectedFolderId = null;
+    state.ui.view = 'dashboard';
+  }
+  saveTree(); saveTasks(); saveUI();
+  toast('Folder deleted');
+  render();
+}
+
+// ---- Reusable UI: modal, confirm, toast -------------------------------------
+
+// Name + emoji picker. Resolves to { name, icon } or null if cancelled.
+function nameModal({ title, name = '', icon = '📁' }) {
+  return new Promise((resolve) => {
+    let chosen = icon;
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = `
+      <div class="modal" role="dialog" aria-modal="true">
+        <h3>${escapeHTML(title)}</h3>
+        <label>Name</label>
+        <input type="text" class="m-name" maxlength="40" />
+        <label style="margin-top:14px">Icon</label>
+        <div class="emoji-grid"></div>
+        <div class="modal-actions">
+          <button class="btn-ghost m-cancel">Cancel</button>
+          <button class="primary m-ok">Save</button>
+        </div>
+      </div>`;
+
+    const grid = overlay.querySelector('.emoji-grid');
+    EMOJI_CHOICES.forEach((e) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = e;
+      if (e === chosen) b.classList.add('selected');
+      b.addEventListener('click', () => {
+        chosen = e;
+        grid.querySelectorAll('button').forEach((x) => x.classList.remove('selected'));
+        b.classList.add('selected');
+      });
+      grid.appendChild(b);
+    });
+
+    const input = overlay.querySelector('.m-name');
+    input.value = name;
+
+    const close = (val) => { overlay.remove(); document.removeEventListener('keydown', onKey); resolve(val); };
+    const submit = () => {
+      const v = input.value.trim();
+      if (!v) { input.focus(); return; }
+      close({ name: v, icon: chosen });
+    };
+    const onKey = (e) => { if (e.key === 'Escape') close(null); };
+
+    overlay.querySelector('.m-ok').addEventListener('click', submit);
+    overlay.querySelector('.m-cancel').addEventListener('click', () => close(null));
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(null); });
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
+    document.addEventListener('keydown', onKey);
+
+    $('#modal-root').appendChild(overlay);
+    input.focus();
+  });
+}
+
+function confirmModal({ title, message, confirmLabel = 'Confirm' }) {
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = `
+      <div class="modal" role="dialog" aria-modal="true">
+        <h3>${escapeHTML(title)}</h3>
+        <p class="modal-text">${escapeHTML(message)}</p>
+        <div class="modal-actions">
+          <button class="btn-ghost m-cancel">Cancel</button>
+          <button class="btn-danger m-ok">${confirmLabel}</button>
+        </div>
+      </div>`;
+    const close = (val) => { overlay.remove(); document.removeEventListener('keydown', onKey); resolve(val); };
+    const onKey = (e) => { if (e.key === 'Escape') close(false); };
+    overlay.querySelector('.m-ok').addEventListener('click', () => close(true));
+    overlay.querySelector('.m-cancel').addEventListener('click', () => close(false));
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(false); });
+    document.addEventListener('keydown', onKey);
+    $('#modal-root').appendChild(overlay);
+    overlay.querySelector('.m-ok').focus();
+  });
+}
+
+function toast(message) {
+  const el = document.createElement('div');
+  el.className = 'toast';
+  el.textContent = message;
+  $('#toast-root').appendChild(el);
+  setTimeout(() => {
+    el.style.transition = 'opacity .25s';
+    el.style.opacity = '0';
+    setTimeout(() => el.remove(), 250);
+  }, 2200);
+}
+
+function emptyState(big, title, text) {
+  const el = document.createElement('div');
+  el.className = 'empty-state';
+  el.innerHTML = `<div class="big">${big}</div><div style="font-size:17px;font-weight:600;margin-bottom:6px">${title}</div><div>${text}</div>`;
+  return el;
+}
+
+// ---- Theme ------------------------------------------------------------------
+
+function applyTheme() {
+  document.documentElement.setAttribute('data-theme', state.ui.theme);
+  $('#theme-toggle').textContent = state.ui.theme === 'dark' ? '🌙' : '☀️';
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute('content', state.ui.theme === 'dark' ? '#1b2231' : '#ffffff');
+}
+
+function toggleTheme() {
+  state.ui.theme = state.ui.theme === 'dark' ? 'light' : 'dark';
+  saveUI();
+  applyTheme();
+}
+
+// ---- Notifications ----------------------------------------------------------
 
 async function enableNotifications() {
   const result = await Notifications.requestPermission();
-  const btn = document.getElementById('enable-notifications');
+  const btn = $('#enable-notifications');
   if (result === 'granted') {
-    btn.textContent = '🔔 Notifications on';
+    btn.textContent = '🔔 On';
     btn.classList.add('enabled');
-    Notifications.send('Notifications enabled', "You'll be reminded when tasks are due.");
+    Notifications.send('Reminders on', "You'll be notified when tasks are due.");
   } else if (result === 'unsupported') {
-    btn.textContent = '🔕 Not supported here';
+    toast('Notifications not supported in this browser');
   } else {
-    btn.textContent = '🔔 Notifications blocked';
+    toast('Notifications blocked — enable them in browser settings');
   }
 }
 
 function runDueCheck() {
-  const titleMap = buildFolderTitleMap(tree);
-  Notifications.checkDueTasks(tasks, titleMap);
+  const titleMap = {};
+  eachFolder((node) => { titleMap[node.id] = node.title; });
+  Notifications.checkDueTasks(state.tasks, titleMap);
 }
 
-// --- sidebar (mobile) --------------------------------------------------------
+// ---- Sidebar (mobile) -------------------------------------------------------
 
 function closeSidebarOnMobile() {
-  if (window.innerWidth <= 720) {
-    document.getElementById('sidebar').classList.remove('open');
-  }
+  if (window.innerWidth <= 760) $('#sidebar').classList.remove('open');
 }
 
-// --- init --------------------------------------------------------------------
+// ---- Init -------------------------------------------------------------------
 
 function init() {
-  renderTree();
-  renderContent();
+  migrateTasks();
+  applyTheme();
+  render();
 
-  document.getElementById('add-task-form').addEventListener('submit', handleAddTask);
-  document.getElementById('enable-notifications').addEventListener('click', enableNotifications);
-  document.getElementById('menu-toggle').addEventListener('click', () => {
-    document.getElementById('sidebar').classList.toggle('open');
+  // Search (debounced-ish: render on each input is fine for local data)
+  $('#search').addEventListener('input', (e) => {
+    searchQuery = e.target.value.trim();
+    renderMain();
+    renderSidebar();
   });
 
-  // Reflect existing notification permission on load.
+  $('#dashboard-pin').addEventListener('click', () => {
+    state.ui.view = 'dashboard';
+    state.ui.selectedFolderId = null;
+    searchQuery = '';
+    $('#search').value = '';
+    saveUI();
+    closeSidebarOnMobile();
+    render();
+  });
+
+  $('#add-root-folder').addEventListener('click', () => addFolder(null));
+  $('#theme-toggle').addEventListener('click', toggleTheme);
+  $('#enable-notifications').addEventListener('click', enableNotifications);
+  $('#menu-toggle').addEventListener('click', () => $('#sidebar').classList.toggle('open'));
+
   if (Notifications.supported() && Notification.permission === 'granted') {
-    const btn = document.getElementById('enable-notifications');
-    btn.textContent = '🔔 Notifications on';
+    const btn = $('#enable-notifications');
+    btn.textContent = '🔔 On';
     btn.classList.add('enabled');
   }
 
-  // Check for due tasks now and then every minute while the app is open.
   runDueCheck();
   setInterval(runDueCheck, 60 * 1000);
 
-  // Register the service worker so the app is installable / works offline.
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('service-worker.js').catch(() => {});
   }
