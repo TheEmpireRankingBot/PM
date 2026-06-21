@@ -1,0 +1,175 @@
+:root {
+  --bg: #111827;
+  --surface: #1f2937;
+  --surface-2: #273141;
+  --border: #374151;
+  --text: #e5e7eb;
+  --muted: #9ca3af;
+  --accent: #6366f1;
+  --accent-2: #818cf8;
+  --danger: #ef4444;
+  --ok: #22c55e;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Top bar */
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.app-title { font-size: 18px; margin: 0; }
+.topbar-actions { margin-left: auto; }
+
+.icon-btn {
+  background: none;
+  border: none;
+  color: var(--text);
+  font-size: 20px;
+  cursor: pointer;
+  display: none; /* shown on mobile */
+}
+
+.pill {
+  background: var(--accent);
+  color: white;
+  border: none;
+  border-radius: 999px;
+  padding: 8px 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.pill.enabled { background: var(--surface-2); color: var(--ok); cursor: default; }
+
+/* Layout */
+.layout { flex: 1; display: flex; min-height: 0; }
+
+.sidebar {
+  width: 280px;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+  padding: 8px 0;
+  flex-shrink: 0;
+}
+
+/* File-explorer tree */
+.tree { font-size: 14px; }
+.tree-folder > .row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+.tree-folder > .row:hover { background: var(--surface-2); }
+.tree-folder .row.selected { background: var(--accent); color: white; }
+.twisty { width: 14px; display: inline-block; color: var(--muted); transition: transform .15s; }
+.twisty.open { transform: rotate(90deg); }
+.tree-children { display: none; }
+.tree-children.open { display: block; }
+.tree-children .row { padding-left: 30px; }
+.tree-children .tree-children .row { padding-left: 48px; }
+.count-badge {
+  margin-left: auto;
+  background: var(--surface-2);
+  color: var(--muted);
+  border-radius: 999px;
+  font-size: 11px;
+  padding: 1px 7px;
+}
+.row.selected .count-badge { background: rgba(255,255,255,.25); color: white; }
+
+/* Content panel */
+.content { flex: 1; overflow-y: auto; padding: 20px 24px; }
+.breadcrumb { color: var(--muted); font-size: 13px; margin-bottom: 4px; min-height: 18px; }
+.folder-title { margin: 0 0 16px; font-size: 24px; }
+
+.add-task { display: flex; gap: 8px; margin-bottom: 18px; flex-wrap: wrap; }
+.add-task input[type="text"] {
+  flex: 1;
+  min-width: 200px;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 14px;
+}
+.add-task input[type="datetime-local"] {
+  padding: 9px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+}
+button.primary {
+  background: var(--accent);
+  color: white;
+  border: none;
+  border-radius: 8px;
+  padding: 10px 18px;
+  font-size: 14px;
+  cursor: pointer;
+}
+button.primary:hover { background: var(--accent-2); }
+
+/* Task list */
+.task-list { list-style: none; margin: 0; padding: 0; }
+.task-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin-bottom: 8px;
+}
+.task-item input[type="checkbox"] { width: 18px; height: 18px; cursor: pointer; }
+.task-main { flex: 1; min-width: 0; }
+.task-text { font-size: 15px; }
+.task-item.done .task-text { text-decoration: line-through; color: var(--muted); }
+.task-due { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.task-due.overdue { color: var(--danger); }
+.task-due.soon { color: #f59e0b; }
+.delete-btn {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 16px;
+}
+.delete-btn:hover { color: var(--danger); }
+
+.empty-hint { color: var(--muted); font-size: 14px; }
+
+/* Mobile */
+@media (max-width: 720px) {
+  .icon-btn { display: block; }
+  .sidebar {
+    position: fixed;
+    top: 52px; bottom: 0; left: 0;
+    z-index: 20;
+    transform: translateX(-100%);
+    transition: transform .2s ease;
+    box-shadow: 2px 0 20px rgba(0,0,0,.4);
+  }
+  .sidebar.open { transform: translateX(0); }
+}

@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#1f2937" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="css/styles.css" />
+  <title>PM — Project Manager</title>
+</head>
+<body>
+  <header class="topbar">
+    <button id="menu-toggle" class="icon-btn" aria-label="Toggle folders">☰</button>
+    <h1 class="app-title">📂 PM</h1>
+    <div class="topbar-actions">
+      <button id="enable-notifications" class="pill">🔔 Enable notifications</button>
+    </div>
+  </header>
+
+  <div class="layout">
+    <!-- File-explorer sidebar -->
+    <aside id="sidebar" class="sidebar">
+      <nav id="tree" class="tree" aria-label="Folders"></nav>
+    </aside>
+
+    <!-- Main panel: the selected folder's to-do items -->
+    <main class="content">
+      <div id="breadcrumb" class="breadcrumb"></div>
+      <h2 id="folder-title" class="folder-title">Select a folder</h2>
+
+      <form id="add-task-form" class="add-task" hidden>
+        <input id="task-input" type="text" placeholder="Add something to do…" autocomplete="off" />
+        <input id="task-due" type="datetime-local" aria-label="Due date" />
+        <button type="submit" class="primary">Add</button>
+      </form>
+
+      <ul id="task-list" class="task-list"></ul>
+      <p id="empty-hint" class="empty-hint"></p>
+    </main>
+  </div>
+
+  <script src="js/data.js"></script>
+  <script src="js/storage.js"></script>
+  <script src="js/notifications.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
