@@ -29,13 +29,16 @@ const Notifications = {
   // Scan every folder's tasks and notify about anything due today or overdue
   // that we haven't already notified about. Marks tasks as notified so you
   // don't get pinged repeatedly for the same thing.
-  checkDueTasks(tasksByFolder, folderTitleById) {
+  // `remindersByFolder` (optional): { [folderId]: boolean }. Folders set to
+  // false are skipped — those hold project work the user doesn't want nagging.
+  checkDueTasks(tasksByFolder, folderTitleById, remindersByFolder) {
     if (!this.supported() || Notification.permission !== 'granted') return;
 
     const now = new Date();
     let changed = false;
 
     for (const [folderId, tasks] of Object.entries(tasksByFolder)) {
+      if (remindersByFolder && remindersByFolder[folderId] === false) continue;
       for (const task of tasks) {
         if (task.done || task.notified || !task.due) continue;
 

@@ -23,7 +23,7 @@ const DEFAULT_TREE = [
     icon: '💼',
     children: [
       { id: 'tasks',        title: 'Tasks',        icon: '✅' },
-      { id: 'innovations',  title: 'Innovations',  icon: '💡' },
+      { id: 'innovations',  title: 'Innovations',  icon: '💡', reminders: false },
       { id: 'meetings',     title: 'Meetings',     icon: '🗓️' },
       { id: 'deadlines',    title: 'Deadlines',    icon: '⏰' },
     ],
@@ -32,6 +32,10 @@ const DEFAULT_TREE = [
     id: 'personal-projects',
     title: 'Personal Projects',
     icon: '🚀',
+    // Project work is tracked but not nagged about — reminders off (inherited by
+    // children). Flip it per-folder in the app. "Reminders are for tasks I need
+    // to do, not for my project work."
+    reminders: false,
     children: [
       { id: 'pm-app',        title: 'Project Manager App', icon: '📱' },
       { id: 'ideas-backlog', title: 'Ideas Backlog',       icon: '🧠' },
