@@ -39,8 +39,29 @@ function migrateTasks() {
       if (t.priority === undefined) t.priority = 'normal';
       if (t.notified === undefined) t.notified = false;
       if (t.recurrence === undefined) t.recurrence = 'none';
+      if (t.estimated === undefined) t.estimated = false; // true = AI-suggested due date
     }
   }
+}
+
+// Effective "send reminders" setting per folder, with inheritance: a folder uses
+// its own `reminders` flag if set, else inherits from its parent, else true.
+// Lets reminders be on for to-do folders but off for project-work folders.
+function buildReminderMap() {
+  const map = {};
+  const walk = (nodes, inherited) => {
+    for (const node of nodes) {
+      const eff = node.reminders === undefined ? inherited : node.reminders;
+      map[node.id] = eff;
+      if (node.children) walk(node.children, eff);
+    }
+  };
+  walk(state.tree, true);
+  return map;
+}
+
+function remindersOn(folderId) {
+  return buildReminderMap()[folderId] !== false;
 }
 
 // ---- Tree helpers -----------------------------------------------------------
@@ -160,7 +181,9 @@ function renderSidebar() {
   const pin = $('#dashboard-pin');
   pin.classList.toggle('active', !searchQuery && state.ui.view === 'dashboard');
   let dueSoonCount = 0;
+  const reminders = buildReminderMap();
   eachFolder((node, path, tasks) => {
+    if (reminders[node.id] === false) return; // project work doesn't nag
     for (const t of tasks) {
       if (!t.done && t.due && new Date(t.due) <= endOfToday()) dueSoonCount++;
     }
@@ -248,6 +271,16 @@ function actionBtn(text, title, onClick) {
   return b;
 }
 
+function toolbarBtn(text, title, onClick, variant = '') {
+  const b = document.createElement('button');
+  b.className = 'toolbar-btn' + (variant ? ' ' + variant : '');
+  b.type = 'button';
+  b.textContent = text;
+  b.title = title;
+  b.addEventListener('click', onClick);
+  return b;
+}
+
 function selectFolder(folderId) {
   state.ui.selectedFolderId = folderId;
   state.ui.view = 'folder';
@@ -321,10 +354,15 @@ function dashboardGroup(label, color, entries) {
   head.innerHTML = `<span class="dot ${color}"></span>${label} <span style="color:var(--muted);font-weight:600">${entries.length}</span>`;
   wrap.appendChild(head);
 
+  const reminders = buildReminderMap();
   const ul = document.createElement('ul');
   ul.className = 'task-list';
   for (const { task, node } of entries) {
-    ul.appendChild(renderTask(task, node.id, { showFolder: true, folderName: `${node.icon || '📁'} ${node.title}` }));
+    ul.appendChild(renderTask(task, node.id, {
+      showFolder: true,
+      folderName: `${node.icon || '📁'} ${node.title}`,
+      project: reminders[node.id] === false,
+    }));
   }
   wrap.appendChild(ul);
   return wrap;
@@ -345,6 +383,23 @@ function renderFolder(node) {
   title.className = 'view-title';
   title.textContent = `${node.icon || '📁'}  ${node.title}`;
   frag.appendChild(title);
+
+  // Folder toolbar — reminders toggle + management (works on touch, no hover)
+  const toolbar = document.createElement('div');
+  toolbar.className = 'folder-toolbar';
+  const on = remindersOn(node.id);
+  toolbar.append(
+    toolbarBtn(on ? '🔔 Reminders on' : '🔕 Reminders off',
+      on ? 'Reminders on — you\'ll be notified when these are due. Tap to turn off (treat as project work).'
+         : 'Reminders off — project work, no due-date notifications. Tap to turn on.',
+      () => { node.reminders = !on; saveTree(); toast(node.reminders ? '🔔 Reminders on' : '🔕 Reminders off'); render(); },
+      on ? 'active' : ''),
+    toolbarBtn('⤵ Bulk add', 'Add many tasks at once', () => openBulkAdd(node.id)),
+    toolbarBtn('➕ Subfolder', 'Add a sub-folder', () => addFolder(node)),
+    toolbarBtn('✏️ Rename', 'Rename this folder', () => renameFolder(node)),
+    toolbarBtn('🗑 Delete', 'Delete this folder', () => deleteFolder(node), 'danger'),
+  );
+  frag.appendChild(toolbar);
 
   // Add-task form
   const form = document.createElement('form');
@@ -372,6 +427,7 @@ function renderFolder(node) {
       due: dueVal ? new Date(dueVal).toISOString() : null,
       done: false,
       notified: false,
+      estimated: false,
       priority: form.querySelector('.new-task-prio').value,
       recurrence: form.querySelector('.new-task-recur').value,
     });
@@ -474,8 +530,9 @@ function renderTask(task, folderId, opts = {}) {
   meta.className = 'task-meta';
   if (task.due) {
     const due = document.createElement('span');
-    due.className = 'task-due ' + dueClass(task);
-    due.textContent = formatDue(task.due);
+    due.className = 'task-due ' + dueClass(task) + (task.estimated ? ' estimated' : '');
+    due.textContent = (task.estimated ? '~' : '') + formatDue(task.due);
+    if (task.estimated) due.title = 'AI-estimated date — edit the task to confirm it';
     meta.appendChild(due);
   }
   if (task.priority === 'high' || task.priority === 'low') {
@@ -489,6 +546,12 @@ function renderTask(task, folderId, opts = {}) {
     chip.className = 'recur-chip';
     chip.textContent = '↻ ' + Recurrence.label(task.recurrence);
     meta.appendChild(chip);
+  }
+  if (opts.project) {
+    const tag = document.createElement('span');
+    tag.className = 'project-chip';
+    tag.textContent = 'project · no reminders';
+    meta.appendChild(tag);
   }
   if (opts.showFolder) {
     const folder = document.createElement('span');
@@ -565,6 +628,7 @@ function startEditTask(li, task, folderId, opts) {
     task.due = dueInput.value ? new Date(dueInput.value).toISOString() : null;
     task.recurrence = recur.value;
     task.notified = false;
+    task.estimated = false; // a hand-set date is confirmed, not an estimate
     saveTasks();
     render();
   };
@@ -643,6 +707,129 @@ async function deleteFolder(node) {
   saveTree(); saveTasks(); saveUI();
   toast('Folder deleted');
   render();
+}
+
+// ---- Bulk add & AI date estimates -------------------------------------------
+
+// A flat <option> list of every folder, indented by depth.
+function folderOptionsHTML(selectedId) {
+  const opts = [];
+  eachFolder((node, path) => {
+    const indent = '— '.repeat(path.length - 1);
+    opts.push(`<option value="${node.id}"${node.id === selectedId ? ' selected' : ''}>${indent}${escapeHTML(node.icon || '📁')} ${escapeHTML(node.title)}</option>`);
+  });
+  return opts.join('');
+}
+
+// One pasted line -> { text, priority }. A trailing "!high" / "!low" sets priority.
+function parseBulkLine(line) {
+  let text = line.trim();
+  let priority = 'normal';
+  const m = text.match(/\s!(high|h|low|l|med|m|normal|n)\s*$/i);
+  if (m) {
+    const p = m[1][0].toLowerCase();
+    priority = p === 'h' ? 'high' : p === 'l' ? 'low' : 'normal';
+    text = text.slice(0, m.index).trim();
+  }
+  return { text, priority };
+}
+
+function openBulkAdd(folderId) {
+  const aiReady = AI.configured();
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal" role="dialog" aria-modal="true">
+      <h3>Bulk add tasks</h3>
+      <p class="modal-text">One task per line. Add <code>!high</code> or <code>!low</code> at the end of a line to set its priority.</p>
+      <textarea class="bulk-text" rows="7" placeholder="Pay the electricity bill !high&#10;Book dentist appointment&#10;Finish chapter 3 of study plan"></textarea>
+      <label style="margin-top:12px">Add to folder</label>
+      <select class="bulk-folder">${folderOptionsHTML(folderId)}</select>
+      <label class="bulk-ai ${aiReady ? '' : 'disabled'}">
+        <input type="checkbox" class="bulk-estimate" ${aiReady ? 'checked' : 'disabled'} />
+        Let the AI estimate due dates for these
+        ${aiReady ? '' : '<span class="muted-note">— connect the Advisor first</span>'}
+      </label>
+      <div class="modal-actions">
+        <button class="btn-ghost m-cancel">Cancel</button>
+        <button class="primary m-ok">Add tasks</button>
+      </div>
+    </div>`;
+
+  const close = () => { overlay.remove(); document.removeEventListener('keydown', onKey); };
+  const onKey = (e) => { if (e.key === 'Escape') close(); };
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+  document.addEventListener('keydown', onKey);
+  overlay.querySelector('.m-cancel').addEventListener('click', close);
+
+  overlay.querySelector('.m-ok').addEventListener('click', async () => {
+    const raw = overlay.querySelector('.bulk-text').value;
+    const target = overlay.querySelector('.bulk-folder').value;
+    const estimate = overlay.querySelector('.bulk-estimate').checked;
+    const lines = raw.split('\n').map((l) => l.trim()).filter(Boolean);
+    if (!lines.length) { close(); return; }
+
+    const created = [];
+    for (const line of lines) {
+      const { text, priority } = parseBulkLine(line);
+      if (!text) continue;
+      const task = { id: uid(), text, due: null, done: false, notified: false, estimated: false, priority, recurrence: 'none' };
+      tasksFor(target).push(task);
+      created.push(task);
+    }
+    saveTasks();
+    close();
+    toast(`Added ${created.length} task${created.length === 1 ? '' : 's'}`);
+    selectFolder(target);
+
+    if (estimate && AI.configured() && created.length) {
+      await estimateDatesFor(created.filter((t) => !t.due), findNode(target)?.title);
+    }
+  });
+
+  $('#modal-root').appendChild(overlay);
+  overlay.querySelector('.bulk-text').focus();
+}
+
+// Turn an estimate's date string (YYYY-MM-DD) into an ISO time (afternoon local).
+function parseEstDate(s) {
+  const m = /(\d{4})-(\d{2})-(\d{2})/.exec(String(s));
+  if (!m) return null;
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 17, 0, 0, 0);
+  return isNaN(d) ? null : d.toISOString();
+}
+
+// Apply AI estimates to tasks that don't already have a (user-set) date.
+function applyEstimates(estimates) {
+  const byId = {};
+  eachFolder((node, path, tasks) => { for (const t of tasks) byId[t.id] = t; });
+  let n = 0;
+  for (const e of estimates || []) {
+    const t = byId[e.id];
+    if (t && !t.due) {
+      const iso = parseEstDate(e.due);
+      if (iso) { t.due = iso; t.estimated = true; t.notified = false; n++; }
+    }
+  }
+  if (n) saveTasks();
+  return n;
+}
+
+// Ask the AI for due dates for the given tasks and apply them. Returns count.
+async function estimateDatesFor(tasks, folderTitle) {
+  const items = tasks.filter((t) => !t.due).map((t) => ({ id: t.id, text: t.text, priority: t.priority, folder: folderTitle }));
+  if (!items.length) return 0;
+  toast('✨ Estimating due dates…');
+  try {
+    const estimates = await AI.estimateDueDates(items);
+    const n = applyEstimates(estimates);
+    toast(n ? `📅 Estimated ${n} date${n === 1 ? '' : 's'}` : 'No dates estimated');
+    render();
+    return n;
+  } catch (err) {
+    toast('Couldn\'t estimate dates: ' + err.message);
+    return 0;
+  }
 }
 
 // ---- Reusable UI: modal, confirm, toast -------------------------------------
@@ -779,7 +966,7 @@ async function enableNotifications() {
 function runDueCheck() {
   const titleMap = {};
   eachFolder((node) => { titleMap[node.id] = node.title; });
-  Notifications.checkDueTasks(state.tasks, titleMap);
+  Notifications.checkDueTasks(state.tasks, titleMap, buildReminderMap());
 }
 
 // ---- Sidebar (mobile) -------------------------------------------------------

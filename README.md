@@ -35,21 +35,29 @@ and use "Add to Home Screen" to install it as an app.
   **Due today**, and in the **Next 7 days** across all folders, plus a progress bar.
   The "Today" badge in the sidebar shows how many items need attention.
 - **File-explorer sidebar** with expandable folders and open-task counts.
-- **Manage folders in the app** — hover a folder to **add a sub-folder, rename, or
-  delete** it (with an emoji picker). No code editing needed.
+- **Manage folders in the app** — every folder has a toolbar to **add a sub-folder,
+  rename, or delete** it (with an emoji picker), so it works on touch too. No code
+  editing needed.
 - **Rich tasks** — add / edit / complete / delete to-dos, each with an optional due
   date and a **priority** (High / Normal / Low). Overdue and due-soon items are
   colour-coded; high-priority items get a red flag.
+- **Bulk add / import** — paste a whole list at once (one task per line). Add
+  `!high` or `!low` to a line to set its priority.
 - **Recurring tasks** — set a to-do to repeat **daily, every weekday, weekly, or
   monthly**. Checking it off rolls it forward to its next due date instead of just
   completing it.
+- **Reminders are for to-dos, not project work** — each folder has a **🔔 Reminders
+  on / 🔕 off** toggle. Project folders (Personal Projects, Innovations) default to
+  **off**, so they're tracked but never nag you; the "Today" badge and device
+  notifications only count reminder-on folders.
 - **✨ AI Advisor** — an optional assistant that can see your folders and tasks and
   help you **plan your day, prioritise, plan your week, or break a project down**.
-  Connect it with your own Anthropic API key (see below).
+  It can also **estimate due dates** for undated tasks (shown with a `~`; editing a
+  task confirms its date). Connect it with your own Anthropic API key (see below).
 - **Search** every task from the top bar.
 - **Light / dark theme** toggle, remembered between visits — along with your last
   open folder and which folders are expanded.
-- **Device reminders** — tap **🔔 Reminders** to be notified when a task is due
+- **Device reminders** — tap **🔔 Reminders** to be notified when a to-do is due
   (works while the app is open or backgrounded).
 - **Installable & offline** (PWA: `manifest.webmanifest` + `service-worker.js`).
 - Everything is saved in your browser (localStorage) — no account needed.
@@ -66,6 +74,11 @@ directly from your browser, sending a summary of your open tasks as context.
 - This direct-from-browser setup is great for a personal app on your own device.
   For a shared or production app, route the calls through a small backend so the
   key never reaches the browser (see *Planned next steps*).
+
+Once connected, the advisor can **estimate completion dates**: use **📅 Estimate
+due dates** in the advisor, or tick *"Let the AI estimate due dates"* in Bulk add.
+It only fills tasks that don't already have a date — anything you set by hand is
+left untouched.
 
 ## Planned next steps
 

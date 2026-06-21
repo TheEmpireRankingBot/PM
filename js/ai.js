@@ -112,6 +112,71 @@ const AI = {
       .join('\n')
       .trim();
   },
+
+  // Ask Claude for JSON matching a schema (structured outputs).
+  async requestJSON(userText, schema, system) {
+    const cfg = this.loadConfig();
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-api-key': cfg.apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
+      },
+      body: JSON.stringify({
+        model: cfg.model,
+        max_tokens: 1024,
+        system: system || '',
+        messages: [{ role: 'user', content: userText }],
+        output_config: { format: { type: 'json_schema', schema } },
+      }),
+    });
+    if (!res.ok) {
+      let detail = `HTTP ${res.status}`;
+      try { detail = (await res.json()).error?.message || detail; } catch { /* keep */ }
+      if (res.status === 401) detail = 'Your API key was rejected. Check it in Advisor settings.';
+      throw new Error(detail);
+    }
+    const data = await res.json();
+    const text = (data.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('').trim();
+    try {
+      return JSON.parse(text);
+    } catch {
+      const m = text.match(/\{[\s\S]*\}/);
+      if (m) return JSON.parse(m[0]);
+      throw new Error('Unexpected response from the model');
+    }
+  },
+
+  // Estimate due dates for tasks. items: [{ id, text, priority, folder }].
+  // Returns [{ id, due }] with due as YYYY-MM-DD.
+  async estimateDueDates(items) {
+    const today = new Date().toISOString().slice(0, 10);
+    const lines = items.map((i) =>
+      `- id:${i.id} — ${i.text}` +
+      (i.priority && i.priority !== 'normal' ? ` [${i.priority} priority]` : '') +
+      (i.folder ? ` (folder: ${i.folder})` : '')
+    ).join('\n');
+    const userText =
+      `Today is ${today}. Estimate a realistic target completion date for each task below ` +
+      `(format YYYY-MM-DD, today or later). Weigh priority and typical effort, and spread them ` +
+      `out sensibly rather than stacking everything on one day. Return exactly one entry per id.\n\n${lines}`;
+    const schema = {
+      type: 'object', additionalProperties: false, required: ['estimates'],
+      properties: {
+        estimates: {
+          type: 'array',
+          items: {
+            type: 'object', additionalProperties: false, required: ['id', 'due'],
+            properties: { id: { type: 'string' }, due: { type: 'string' } },
+          },
+        },
+      },
+    };
+    const data = await this.requestJSON(userText, schema, 'You are a planning assistant that assigns realistic task due dates.');
+    return data.estimates || [];
+  },
 };
 
 // ---- Advisor UI -------------------------------------------------------------
@@ -201,6 +266,47 @@ function renderAdvisor(panel, close) {
       renderMessages();
     }
   };
+
+  // Action chip: estimate due dates (does work, not just chat).
+  const estimateAction = async () => {
+    const items = [];
+    eachFolder((node, path, tasks) => {
+      for (const t of tasks) {
+        if (!t.done && !t.due) items.push({ id: t.id, text: t.text, priority: t.priority, folder: node.title });
+      }
+    });
+    if (!items.length) {
+      aiMessages.push({ role: 'assistant', content: 'All your open tasks already have dates. 👍' });
+      renderMessages();
+      return;
+    }
+    aiMessages.push({ role: 'user', content: `Estimate due dates for my ${items.length} undated task${items.length === 1 ? '' : 's'}.` });
+    renderMessages();
+    const thinking = document.createElement('div');
+    thinking.className = 'advisor-msg assistant thinking';
+    thinking.textContent = 'Estimating…';
+    messagesEl.appendChild(thinking);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+    try {
+      const estimates = await AI.estimateDueDates(items);
+      const n = applyEstimates(estimates);
+      render(); // refresh the app behind the panel
+      aiMessages.push({ role: 'assistant', content: n
+        ? `Done — I set estimated due dates for **${n}** task${n === 1 ? '' : 's'}. They show with a ~ so you know they're estimates; edit any task to confirm or change it.`
+        : 'I couldn\'t produce usable dates for those — try again in a moment.' });
+    } catch (err) {
+      aiMessages.push({ role: 'assistant', content: '⚠️ ' + err.message });
+    } finally {
+      renderMessages();
+    }
+  };
+
+  const estimateChip = document.createElement('button');
+  estimateChip.type = 'button';
+  estimateChip.className = 'quick-chip action-chip';
+  estimateChip.textContent = '📅 Estimate due dates';
+  estimateChip.addEventListener('click', estimateAction);
+  quickEl.appendChild(estimateChip);
 
   for (const q of AI_QUICK_PROMPTS) {
     const b = document.createElement('button');
