@@ -27,7 +27,41 @@ const AI_SYSTEM_PROMPT =
   "PM app. You can see their folders and tasks in the context below. Give concise, " +
   "practical, encouraging advice. When you plan or prioritise, refer to their actual " +
   "tasks and due dates by name. Prefer short paragraphs and tight bullet lists. " +
-  "If something is overdue, gently flag it. Keep replies focused — don't pad.";
+  "If something is overdue, gently flag it. Keep replies focused — don't pad.\n\n" +
+  "You can CREATE tasks for the user with the create_tasks tool. When they ask to add, " +
+  "track, schedule, note, or remind them of something, call create_tasks — pick the " +
+  "best-matching folder from the list, turn natural dates ('tomorrow', 'next Friday') " +
+  "into YYYY-MM-DD using today's date, and set priority/recurrence when implied. After " +
+  "creating, briefly confirm what you added. Don't create tasks for general questions or " +
+  "when the user is only asking for advice.";
+
+const CREATE_TASKS_TOOL = {
+  name: 'create_tasks',
+  description: 'Add one or more to-do tasks to the user\'s project manager. Use when the user asks to add/track/schedule/remember something.',
+  input_schema: {
+    type: 'object',
+    additionalProperties: false,
+    required: ['tasks'],
+    properties: {
+      tasks: {
+        type: 'array',
+        description: 'The tasks to create.',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['text'],
+          properties: {
+            text: { type: 'string', description: 'The task description.' },
+            folder: { type: 'string', description: 'Which folder to file it under — match one of the folder names provided in context. Omit to use a sensible default.' },
+            due: { type: 'string', description: 'Optional due date as YYYY-MM-DD.' },
+            priority: { type: 'string', enum: ['low', 'normal', 'high'] },
+            recurrence: { type: 'string', enum: ['none', 'daily', 'weekdays', 'weekly', 'monthly'] },
+          },
+        },
+      },
+    },
+  },
+};
 
 const AI_QUICK_PROMPTS = [
   { label: '🗓️ Plan my day', text: 'Plan my day. What should I focus on, in what order?' },
@@ -72,8 +106,12 @@ const AI = {
       }
     });
     const today = now.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
-    return `Today is ${today}.\n` +
-      (lines.length ? `Here are the user's open tasks by folder:${lines.join('\n')}` : 'The user has no open tasks yet.');
+    const isoToday = now.toISOString().slice(0, 10);
+    const allFolders = [];
+    eachFolder((node, path) => allFolders.push(path.map((n) => n.title).join(' › ')));
+    return `Today is ${today} (${isoToday}).\n` +
+      (lines.length ? `Here are the user's open tasks by folder:${lines.join('\n')}` : 'The user has no open tasks yet.') +
+      `\n\nFolders you can file new tasks under: ${allFolders.join(', ')}.`;
   },
 
   // Send the conversation to Claude and return the assistant's reply text.
@@ -111,6 +149,51 @@ const AI = {
       .map((b) => b.text)
       .join('\n')
       .trim();
+  },
+
+  _headers() {
+    const cfg = this.loadConfig();
+    return {
+      'content-type': 'application/json',
+      'x-api-key': cfg.apiKey,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true',
+    };
+  },
+
+  // A chat turn that can call tools. `onTool(name, input)` runs the tool and
+  // returns a short result string the model sees. Returns the final reply text.
+  async converse(apiMessages, { system, tools, onTool }) {
+    const cfg = this.loadConfig();
+    let messages = apiMessages.slice();
+    for (let i = 0; i < 4; i++) {
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: this._headers(),
+        body: JSON.stringify({ model: cfg.model, max_tokens: 1024, system, messages, tools }),
+      });
+      if (!res.ok) {
+        let detail = `HTTP ${res.status}`;
+        try { detail = (await res.json()).error?.message || detail; } catch { /* keep */ }
+        if (res.status === 401) detail = 'Your API key was rejected. Check it in Advisor settings.';
+        throw new Error(detail);
+      }
+      const data = await res.json();
+      const text = (data.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('\n').trim();
+      if (data.stop_reason === 'tool_use') {
+        messages.push({ role: 'assistant', content: data.content });
+        const results = [];
+        for (const block of data.content.filter((b) => b.type === 'tool_use')) {
+          let out = '';
+          try { out = await onTool(block.name, block.input); } catch (e) { out = 'Error: ' + e.message; }
+          results.push({ type: 'tool_result', tool_use_id: block.id, content: out });
+        }
+        messages.push({ role: 'user', content: results });
+        continue; // let the model summarise after the tool ran
+      }
+      return text;
+    }
+    return 'Done.';
   },
 
   // Ask Claude for JSON matching a schema (structured outputs).
@@ -231,7 +314,7 @@ function renderAdvisor(panel, close) {
   const renderMessages = () => {
     messagesEl.innerHTML = '';
     if (!aiMessages.length) {
-      messagesEl.innerHTML = `<div class="advisor-hint">I can see your folders and tasks. Ask me to plan your day, prioritise, or break something down.</div>`;
+      messagesEl.innerHTML = `<div class="advisor-hint">I can see your folders and tasks — and I can <strong>add tasks</strong> for you. Try “add buy milk tomorrow and call the dentist Friday”, or ask me to plan your day or break something down.</div>`;
     }
     for (const m of aiMessages) {
       const row = document.createElement('div');
@@ -256,9 +339,25 @@ function renderAdvisor(panel, close) {
     messagesEl.scrollTop = messagesEl.scrollHeight;
     form.querySelector('button').disabled = true;
 
+    let createdCount = 0;
     try {
-      const reply = await AI.ask(aiMessages);
+      const apiMessages = aiMessages.map((m) => ({ role: m.role, content: m.content }));
+      const reply = await AI.converse(apiMessages, {
+        system: AI_SYSTEM_PROMPT + '\n\n' + AI.buildContext(),
+        tools: [CREATE_TASKS_TOOL],
+        onTool: async (name, inputArg) => {
+          if (name !== 'create_tasks') return 'Unknown tool';
+          const created = aiCreateTasks(inputArg.tasks || []);
+          createdCount += created.length;
+          if (!created.length) return 'No tasks were created (empty or invalid input).';
+          return 'Created ' + created.length + ' task(s): ' + created.map((c) =>
+            `"${c.task.text}" in ${c.folderTitle}` +
+            (c.task.due ? ` (due ${new Date(c.task.due).toLocaleDateString()})` : '')
+          ).join('; ') + '.';
+        },
+      });
       aiMessages.push({ role: 'assistant', content: reply || '(no response)' });
+      if (createdCount) toast(`✅ Added ${createdCount} task${createdCount === 1 ? '' : 's'}`);
     } catch (err) {
       aiMessages.push({ role: 'assistant', content: '⚠️ ' + err.message });
     } finally {

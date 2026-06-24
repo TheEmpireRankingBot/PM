@@ -260,6 +260,28 @@ button { font-family: inherit; }
 .toolbar-btn.active { border-color: var(--ok); color: var(--ok); }
 .toolbar-btn.danger:hover { border-color: var(--danger); color: var(--danger); }
 
+/* Quick-add (dashboard) */
+.quick-add { display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; }
+.quick-add .qa-text {
+  flex: 1 1 200px;
+  min-width: 0;
+  padding: 11px 13px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  color: var(--text);
+  font-size: 14px;
+}
+.quick-add .qa-folder {
+  padding: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  color: var(--text);
+  font-size: 13px;
+  max-width: 45%;
+}
+
 /* Progress bar (dashboard) */
 .progress-wrap {
   background: var(--surface);
@@ -414,9 +436,20 @@ button.primary:hover { background: var(--accent-2); }
   font-size: 14px;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   animation: toast-in .2s ease;
+  pointer-events: auto;
 }
+.toast-action {
+  background: none;
+  border: none;
+  color: var(--accent-2);
+  font-weight: 700;
+  font-size: 13px;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+.toast-action:hover { text-decoration: underline; }
 @keyframes toast-in { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
 
 /* ---- Modal ----------------------------------------------------------------- */

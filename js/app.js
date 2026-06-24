@@ -307,6 +307,9 @@ function renderDashboard() {
   sub.textContent = new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
   frag.append(title, sub);
 
+  // Quick capture straight from Today, into any folder
+  frag.appendChild(renderQuickAdd());
+
   // Gather tasks into buckets
   const overdue = [], today = [], upcoming = [];
   let total = 0, done = 0;
@@ -348,6 +351,33 @@ function renderDashboard() {
   if (upcoming.length) frag.appendChild(dashboardGroup('Next 7 days', 'blue', upcoming));
 
   return frag;
+}
+
+// Compact "quick add" form for the Today screen — adds to a chosen folder.
+function renderQuickAdd() {
+  const form = document.createElement('form');
+  form.className = 'quick-add';
+  const def = (state.ui.lastAddFolder && findNode(state.ui.lastAddFolder)) ? state.ui.lastAddFolder : resolveFolderId('Tasks');
+  form.innerHTML =
+    `<input type="text" class="qa-text" placeholder="Quick add a task…" autocomplete="off" aria-label="Quick add a task" />` +
+    `<select class="qa-folder" aria-label="Folder">${folderOptionsHTML(def)}</select>` +
+    `<button type="submit" class="primary">Add</button>`;
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const raw = form.querySelector('.qa-text').value.trim();
+    if (!raw) return;
+    const folderId = form.querySelector('.qa-folder').value;
+    const { text, priority } = parseBulkLine(raw);
+    if (!text) return;
+    tasksFor(folderId).push({ id: uid(), text, due: null, done: false, notified: false, estimated: false, priority, recurrence: 'none' });
+    state.ui.lastAddFolder = folderId;
+    saveUI();
+    saveTasks();
+    const title = findNode(folderId)?.title || 'folder';
+    render();
+    toast('Added to ' + title, { label: 'View', onClick: () => selectFolder(folderId) });
+  });
+  return form;
 }
 
 function dashboardGroup(label, color, entries) {
@@ -572,10 +602,18 @@ function renderTask(task, folderId, opts = {}) {
   actions.append(
     taskBtn('✏️', 'Edit', () => startEditTask(li, task, folderId, opts)),
     taskBtn('🗑', 'Delete', () => {
-      state.tasks[folderId] = tasksFor(folderId).filter((t) => t.id !== task.id);
+      const arr = tasksFor(folderId);
+      const idx = arr.findIndex((t) => t.id === task.id);
+      if (idx < 0) return;
+      const [removed] = arr.splice(idx, 1);
       saveTasks();
-      toast('Task deleted');
       render();
+      toast('Task deleted', { label: 'Undo', onClick: () => {
+        const list = tasksFor(folderId);
+        list.splice(Math.min(idx, list.length), 0, removed);
+        saveTasks();
+        render();
+      } });
     }, true),
   );
 
@@ -835,6 +873,48 @@ async function estimateDatesFor(tasks, folderTitle) {
   }
 }
 
+// Pick a folder id from a (possibly fuzzy) name the AI supplied, with fallbacks.
+function resolveFolderId(name) {
+  const all = [];
+  eachFolder((node) => all.push(node));
+  if (name) {
+    const lc = String(name).toLowerCase().trim();
+    const hit = all.find((n) => n.title.toLowerCase() === lc) ||
+      all.find((n) => n.title.toLowerCase().includes(lc) || lc.includes(n.title.toLowerCase()));
+    if (hit) return hit.id;
+  }
+  const tasksFolder = all.find((n) => n.title.toLowerCase() === 'tasks');
+  if (tasksFolder) return tasksFolder.id;
+  if (state.ui.selectedFolderId && findNode(state.ui.selectedFolderId)) return state.ui.selectedFolderId;
+  return all[0] && all[0].id;
+}
+
+// Create tasks from AI tool calls. specs: [{ text, folder?, due?, priority?, recurrence? }].
+// Returns [{ task, folderId, folderTitle }] for the ones created.
+function aiCreateTasks(specs) {
+  const created = [];
+  for (const s of specs || []) {
+    const text = (s && s.text ? String(s.text) : '').trim();
+    if (!text) continue;
+    const folderId = resolveFolderId(s.folder);
+    if (!folderId) continue;
+    const task = {
+      id: uid(),
+      text,
+      due: s.due ? parseEstDate(s.due) : null, // explicit instruction, not an estimate
+      done: false,
+      notified: false,
+      estimated: false,
+      priority: ['high', 'low', 'normal'].includes(s.priority) ? s.priority : 'normal',
+      recurrence: ['daily', 'weekdays', 'weekly', 'monthly', 'none'].includes(s.recurrence) ? s.recurrence : 'none',
+    };
+    tasksFor(folderId).push(task);
+    created.push({ task, folderId, folderTitle: findNode(folderId)?.title || 'Tasks' });
+  }
+  if (created.length) { saveTasks(); render(); }
+  return created;
+}
+
 // ---- Reusable UI: modal, confirm, toast -------------------------------------
 
 // Name + emoji picker. Resolves to { name, icon } or null if cancelled.
@@ -916,16 +996,28 @@ function confirmModal({ title, message, confirmLabel = 'Confirm' }) {
   });
 }
 
-function toast(message) {
+// toast(message) or toast(message, { label, onClick }) for an action (e.g. Undo).
+function toast(message, action) {
   const el = document.createElement('div');
   el.className = 'toast';
-  el.textContent = message;
-  $('#toast-root').appendChild(el);
-  setTimeout(() => {
+  const span = document.createElement('span');
+  span.textContent = message;
+  el.appendChild(span);
+
+  const dismiss = () => {
     el.style.transition = 'opacity .25s';
     el.style.opacity = '0';
     setTimeout(() => el.remove(), 250);
-  }, 2200);
+  };
+  if (action) {
+    const btn = document.createElement('button');
+    btn.className = 'toast-action';
+    btn.textContent = action.label;
+    btn.addEventListener('click', () => { clearTimeout(timer); el.remove(); action.onClick(); });
+    el.appendChild(btn);
+  }
+  $('#toast-root').appendChild(el);
+  const timer = setTimeout(dismiss, action ? 5000 : 2200);
 }
 
 function emptyState(big, title, text) {
