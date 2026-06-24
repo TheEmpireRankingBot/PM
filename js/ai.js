@@ -28,12 +28,42 @@ const AI_SYSTEM_PROMPT =
   "practical, encouraging advice. When you plan or prioritise, refer to their actual " +
   "tasks and due dates by name. Prefer short paragraphs and tight bullet lists. " +
   "If something is overdue, gently flag it. Keep replies focused — don't pad.\n\n" +
-  "You can CREATE tasks for the user with the create_tasks tool. When they ask to add, " +
-  "track, schedule, note, or remind them of something, call create_tasks — pick the " +
-  "best-matching folder from the list, turn natural dates ('tomorrow', 'next Friday') " +
-  "into YYYY-MM-DD using today's date, and set priority/recurrence when implied. After " +
-  "creating, briefly confirm what you added. Don't create tasks for general questions or " +
-  "when the user is only asking for advice.";
+  "You can MODIFY the workspace yourself — never tell the user you can't add or change " +
+  "things. You have two tools:\n" +
+  "• create_folders — make new folders/categories (optionally nested under a parent).\n" +
+  "• create_tasks — add to-do tasks to a folder.\n" +
+  "When the user asks to set up an area/category, call create_folders. When they ask to " +
+  "add, track, schedule, note, or remind them of something, call create_tasks — pick the " +
+  "best-matching folder from the list (create it first with create_folders if it doesn't " +
+  "exist), turn natural dates ('tomorrow', 'next Friday') into YYYY-MM-DD using today's " +
+  "date, and set priority/recurrence when implied. After acting, briefly confirm what you " +
+  "created. Only skip the tools when the user is purely asking for advice or a question.";
+
+const CREATE_FOLDERS_TOOL = {
+  name: 'create_folders',
+  description: 'Create one or more folders (categories) in the user\'s workspace. Use when they ask to set up a new area, category, project, or list.',
+  input_schema: {
+    type: 'object',
+    additionalProperties: false,
+    required: ['folders'],
+    properties: {
+      folders: {
+        type: 'array',
+        description: 'The folders to create.',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['name'],
+          properties: {
+            name: { type: 'string', description: 'The folder name.' },
+            parent: { type: 'string', description: 'Optional parent folder name to nest under (match an existing folder). Omit for a top-level folder.' },
+            icon: { type: 'string', description: 'Optional single emoji for the folder.' },
+          },
+        },
+      },
+    },
+  },
+};
 
 const CREATE_TASKS_TOOL = {
   name: 'create_tasks',
@@ -314,7 +344,7 @@ function renderAdvisor(panel, close) {
   const renderMessages = () => {
     messagesEl.innerHTML = '';
     if (!aiMessages.length) {
-      messagesEl.innerHTML = `<div class="advisor-hint">I can see your folders and tasks — and I can <strong>add tasks</strong> for you. Try “add buy milk tomorrow and call the dentist Friday”, or ask me to plan your day or break something down.</div>`;
+      messagesEl.innerHTML = `<div class="advisor-hint">I can see your workspace and <strong>create folders and tasks</strong> for you. Try “make a Trip to Japan folder and add: book flights, hotel, JR pass”, or “add buy milk tomorrow”. I can also plan your day or break a project down.</div>`;
     }
     for (const m of aiMessages) {
       const row = document.createElement('div');
@@ -339,25 +369,39 @@ function renderAdvisor(panel, close) {
     messagesEl.scrollTop = messagesEl.scrollHeight;
     form.querySelector('button').disabled = true;
 
-    let createdCount = 0;
+    let createdTasks = 0;
+    let createdFolders = 0;
     try {
       const apiMessages = aiMessages.map((m) => ({ role: m.role, content: m.content }));
       const reply = await AI.converse(apiMessages, {
         system: AI_SYSTEM_PROMPT + '\n\n' + AI.buildContext(),
-        tools: [CREATE_TASKS_TOOL],
+        tools: [CREATE_FOLDERS_TOOL, CREATE_TASKS_TOOL],
         onTool: async (name, inputArg) => {
-          if (name !== 'create_tasks') return 'Unknown tool';
-          const created = aiCreateTasks(inputArg.tasks || []);
-          createdCount += created.length;
-          if (!created.length) return 'No tasks were created (empty or invalid input).';
-          return 'Created ' + created.length + ' task(s): ' + created.map((c) =>
-            `"${c.task.text}" in ${c.folderTitle}` +
-            (c.task.due ? ` (due ${new Date(c.task.due).toLocaleDateString()})` : '')
-          ).join('; ') + '.';
+          if (name === 'create_folders') {
+            const made = aiCreateFolders(inputArg.folders || []);
+            createdFolders += made.length;
+            if (!made.length) return 'No folders were created (empty or invalid input).';
+            return 'Created folder(s): ' + made.map((m) =>
+              `"${m.node.title}"` + (m.parentTitle ? ` under ${m.parentTitle}` : '')
+            ).join('; ') + '.';
+          }
+          if (name === 'create_tasks') {
+            const created = aiCreateTasks(inputArg.tasks || []);
+            createdTasks += created.length;
+            if (!created.length) return 'No tasks were created (empty or invalid input).';
+            return 'Created ' + created.length + ' task(s): ' + created.map((c) =>
+              `"${c.task.text}" in ${c.folderTitle}` +
+              (c.task.due ? ` (due ${new Date(c.task.due).toLocaleDateString()})` : '')
+            ).join('; ') + '.';
+          }
+          return 'Unknown tool';
         },
       });
       aiMessages.push({ role: 'assistant', content: reply || '(no response)' });
-      if (createdCount) toast(`✅ Added ${createdCount} task${createdCount === 1 ? '' : 's'}`);
+      const bits = [];
+      if (createdFolders) bits.push(`📁 ${createdFolders} folder${createdFolders === 1 ? '' : 's'}`);
+      if (createdTasks) bits.push(`✅ ${createdTasks} task${createdTasks === 1 ? '' : 's'}`);
+      if (bits.length) toast('Added ' + bits.join(' · '));
     } catch (err) {
       aiMessages.push({ role: 'assistant', content: '⚠️ ' + err.message });
     } finally {
