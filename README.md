@@ -52,8 +52,12 @@ and use "Add to Home Screen" to install it as an app.
   notifications only count reminder-on folders.
 - **✨ AI Advisor** — an optional assistant that can see your folders and tasks and
   help you **plan your day, prioritise, plan your week, or break a project down**.
-  It can also **estimate due dates** for undated tasks (shown with a `~`; editing a
-  task confirms its date). Connect it with your own Anthropic API key (see below).
+  It can **create tasks for you** from plain language — e.g. *"add buy milk tomorrow
+  and call the dentist Friday !high"* files them in the right folders with dates —
+  and **estimate due dates** for undated tasks (shown with a `~`; editing confirms
+  it). Connect it with your own Anthropic API key (see below).
+- **Quick add** — a capture bar on the Today screen adds a task to any folder
+  without leaving the dashboard. **Undo** appears after deleting a task.
 - **Search** every task from the top bar.
 - **Light / dark theme** toggle, remembered between visits — along with your last
   open folder and which folders are expanded.
