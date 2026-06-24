@@ -873,20 +873,48 @@ async function estimateDatesFor(tasks, folderTitle) {
   }
 }
 
-// Pick a folder id from a (possibly fuzzy) name the AI supplied, with fallbacks.
-function resolveFolderId(name) {
+// Find a folder node by (fuzzy) name, or null. Used for AI folder targeting.
+function findFolderByName(name) {
+  if (!name) return null;
   const all = [];
   eachFolder((node) => all.push(node));
-  if (name) {
-    const lc = String(name).toLowerCase().trim();
-    const hit = all.find((n) => n.title.toLowerCase() === lc) ||
-      all.find((n) => n.title.toLowerCase().includes(lc) || lc.includes(n.title.toLowerCase()));
-    if (hit) return hit.id;
-  }
+  const lc = String(name).toLowerCase().trim();
+  return all.find((n) => n.title.toLowerCase() === lc) ||
+    all.find((n) => n.title.toLowerCase().includes(lc) || lc.includes(n.title.toLowerCase())) || null;
+}
+
+// Pick a folder id from a (possibly fuzzy) name the AI supplied, with fallbacks.
+function resolveFolderId(name) {
+  const match = findFolderByName(name);
+  if (match) return match.id;
+  const all = [];
+  eachFolder((node) => all.push(node));
   const tasksFolder = all.find((n) => n.title.toLowerCase() === 'tasks');
   if (tasksFolder) return tasksFolder.id;
   if (state.ui.selectedFolderId && findNode(state.ui.selectedFolderId)) return state.ui.selectedFolderId;
   return all[0] && all[0].id;
+}
+
+// Create folders from AI tool calls. specs: [{ name, parent?, icon? }].
+// Returns [{ node, parentTitle }] for the ones created.
+function aiCreateFolders(specs) {
+  const created = [];
+  for (const s of specs || []) {
+    const name = (s && s.name ? String(s.name) : '').trim();
+    if (!name) continue;
+    const node = { id: uid(), title: name, icon: (s.icon && String(s.icon).trim()) || '📁', children: [] };
+    const parent = s.parent ? findFolderByName(s.parent) : null;
+    if (parent) {
+      parent.children = parent.children || [];
+      parent.children.push(node);
+      state.ui.expanded[parent.id] = true;
+    } else {
+      state.tree.push(node);
+    }
+    created.push({ node, parentTitle: parent ? parent.title : null });
+  }
+  if (created.length) { saveTree(); saveUI(); render(); }
+  return created;
 }
 
 // Create tasks from AI tool calls. specs: [{ text, folder?, due?, priority?, recurrence? }].
